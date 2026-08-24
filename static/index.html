@@ -121,13 +121,11 @@
 
       <div class="bg-slate-900/80 border border-slate-800/90 rounded-2xl p-4 sm:p-7 backdrop-blur-xl shadow-2xl relative overflow-hidden">
         
-        <!-- Project Name Input -->
         <div class="mb-4">
           <label class="block text-xs font-semibold text-slate-300 mb-1.5">Project Name (Optional):</label>
           <input type="text" id="projectNameInput" placeholder="e.g. Anime Episode 01 Dubbing" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-700 text-sm text-white focus:outline-none focus:border-indigo-500 transition">
         </div>
 
-        <!-- Dropzone -->
         <div id="dropzone" class="border-2 border-dashed border-slate-700 hover:border-indigo-500/80 rounded-xl p-6 sm:p-8 text-center cursor-pointer transition-all duration-200 bg-slate-950/50 hover:bg-indigo-950/20">
           <input type="file" id="videoFileInput" accept="video/*" class="hidden">
           
@@ -142,7 +140,6 @@
             Supports MP4, MKV, MOV, AVI, WEBM (any size & length)
           </p>
 
-          <!-- Selected File Details -->
           <div id="selectedFileInfo" class="hidden inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-lg bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 text-xs font-medium">
             <i data-lucide="file-video" class="w-4 h-4 text-indigo-400"></i>
             <span id="selectedFileName" class="max-w-[180px] sm:max-w-xs truncate">video.mp4</span>
@@ -153,7 +150,6 @@
           </div>
         </div>
 
-        <!-- Slicing Settings -->
         <div class="mt-5 pt-4 border-t border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <label class="text-xs font-semibold text-slate-300 block mb-1">Segment Duration:</label>
@@ -170,7 +166,6 @@
           </div>
         </div>
 
-        <!-- Submit Button -->
         <div class="mt-5">
           <button id="startProcessBtn" disabled class="w-full py-3 px-6 rounded-xl font-bold text-sm bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:from-indigo-600 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none transition-all flex items-center justify-center gap-2">
             <i data-lucide="scissors" class="w-4 h-4"></i>
@@ -183,14 +178,12 @@
     <!-- View: Project Studio / Clips Workspace -->
     <section id="studioView" class="hidden">
       
-      <!-- Studio Header & Breadcrumb -->
       <div class="flex items-center justify-between mb-3">
         <button onclick="showProjectsView()" class="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-indigo-400 transition font-medium">
           <i data-lucide="chevron-left" class="w-4 h-4"></i>
           <span>Back to Projects</span>
         </button>
         
-        <!-- View Layout Toggle -->
         <div class="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5">
           <button id="viewModeListBtn" class="px-2.5 py-1 text-xs rounded-md bg-indigo-600 text-white font-medium flex items-center gap-1">
             <i data-lucide="list" class="w-3.5 h-3.5"></i>
@@ -203,7 +196,7 @@
         </div>
       </div>
 
-      <!-- Live Slicing Status Banner (Shown when background cutting is in progress) -->
+      <!-- Live Slicing Status Banner -->
       <div id="liveSlicingBanner" class="hidden bg-gradient-to-r from-indigo-950/80 to-purple-950/80 border border-indigo-500/40 rounded-2xl p-3.5 sm:p-4 mb-4 backdrop-blur-md shadow-lg">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div class="flex items-center gap-2.5">
@@ -282,7 +275,7 @@
         </div>
       </div>
 
-      <!-- Clips Container (List or Grid) -->
+      <!-- Clips Container -->
       <div id="clipsContainer" class="space-y-2.5">
         <!-- Rendered dynamically -->
       </div>
@@ -303,6 +296,28 @@
     <button onclick="showProjectsView()" class="py-2 px-2.5 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-medium flex items-center justify-center">
       <i data-lucide="folder" class="w-3.5 h-3.5"></i>
     </button>
+  </div>
+
+  <!-- Custom Delete Confirmation Modal -->
+  <div id="customDeleteModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-3 sm:p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 sm:p-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+      <div class="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mx-auto mb-3.5">
+        <i data-lucide="trash-2" class="w-6 h-6"></i>
+      </div>
+      <h4 class="text-base font-bold text-white text-center mb-1">Delete Project?</h4>
+      <p id="deleteModalProjectName" class="text-xs text-slate-300 text-center font-medium mb-2 truncate">Project Name</p>
+      <p class="text-xs text-slate-400 text-center mb-5">
+        Are you sure you want to delete this project? All associated sliced clips, dubbed replacements, and files will be permanently removed.
+      </p>
+      <div class="flex gap-2">
+        <button type="button" id="cancelDeleteBtn" class="flex-1 py-2.5 rounded-xl border border-slate-700 text-xs font-semibold text-slate-300 hover:bg-slate-800 transition">
+          Cancel
+        </button>
+        <button type="button" id="confirmDeleteBtn" class="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-xs font-bold text-white shadow-lg shadow-red-500/20 transition">
+          Yes, Delete
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Clip Replace Modal -->
@@ -328,7 +343,7 @@
           <span id="replaceTargetTime" class="font-mono font-semibold text-white">00:00 - 01:00 (60s)</span>
         </div>
         <div class="text-slate-500 text-[11px]">
-          * The replacement video can be any duration (e.g. 1m, 2m, 30s).
+          * The replacement video can be any duration (e.g. 10s, 30s, 1m, 2m).
         </div>
       </div>
 

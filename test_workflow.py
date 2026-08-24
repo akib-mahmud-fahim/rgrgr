@@ -93,7 +93,7 @@ def run_tests():
     merged_info = video_processor.get_video_info(merged_output)
     print(f"Merged Video created successfully! Total Duration: {merged_info['duration_formatted']} (60s + 20s + 15s = ~95s)")
     
-    print("\n✅ ALL TESTS PASSED SUCCESSFULLY!")
+    print("\n[SUCCESS] ALL WORKFLOW AND REPLACEMENT TESTS PASSED PERFECTLY!")
 
 if __name__ == "__main__":
     run_tests()

@@ -6,7 +6,7 @@ import threading
 import shutil
 import time
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Response
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +19,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
-app = FastAPI(title="AutoClip Pro - Video Slicer & Dubbing Studio")
+app = FastAPI(title="AutoClip Studio - Video Slicer & Dubbing Studio")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,12 +36,10 @@ def process_video_background(project_id: str, input_video_path: str, segment_len
     project_dir = os.path.join(PROJECTS_DIR, project_id)
     
     try:
-        # Step 1: Probe video info immediately
         info = video_processor.get_video_info(input_video_path)
         segments = video_processor.calculate_segments(info["duration"], segment_length)
         total_segments = len(segments)
         
-        # Initialize placeholder clips list
         initial_clips = []
         for seg in segments:
             initial_clips.append({
@@ -61,7 +59,7 @@ def process_video_background(project_id: str, input_video_path: str, segment_len
                 "replaced_filename": None,
                 "original_filename": f"{seg['clip_id']}.mp4",
                 "filesize": 0,
-                "status": "pending"  # pending | processing | ready
+                "status": "pending"
             })
             
         project_data = {
@@ -73,7 +71,7 @@ def process_video_background(project_id: str, input_video_path: str, segment_len
             "original_info": info,
             "clips": initial_clips,
             "created_at": time.time(),
-            "status": "processing",  # processing | ready
+            "status": "processing",
             "ready_clips_count": 0,
             "current_processing_index": 1
         }
@@ -91,12 +89,10 @@ def process_video_background(project_id: str, input_video_path: str, segment_len
             "project": project_data
         }
         
-        # Step 2: Slice each clip progressively & update project.json in real time!
         for i, seg in enumerate(segments):
             project_data["current_processing_index"] = i + 1
             project_data["clips"][i]["status"] = "processing"
             
-            # Save processing state
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(project_data, f, indent=2)
                 
@@ -104,14 +100,11 @@ def process_video_background(project_id: str, input_video_path: str, segment_len
             tasks_progress[project_id]["current"] = i
             tasks_progress[project_id]["percent"] = int(10 + (i / total_segments) * 85)
             
-            # Perform slicing for this single clip
             ready_clip = video_processor.slice_single_clip(input_video_path, project_dir, seg)
             
-            # Replace placeholder with ready clip
             project_data["clips"][i] = ready_clip
             project_data["ready_clips_count"] = i + 1
             
-            # Save instantly so frontend and download endpoints can immediately access it!
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(project_data, f, indent=2)
                 
@@ -120,7 +113,6 @@ def process_video_background(project_id: str, input_video_path: str, segment_len
             tasks_progress[project_id]["percent"] = int(10 + ((i + 1) / total_segments) * 85)
             tasks_progress[project_id]["message"] = f"Clip {i + 1} of {total_segments} is ready!"
             
-        # All clips finished
         project_data["status"] = "ready"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(project_data, f, indent=2)
@@ -139,9 +131,14 @@ def process_video_background(project_id: str, input_video_path: str, segment_len
             "message": f"Processing failed: {str(e)}"
         }
 
+@app.get("/api/ping")
+async def ping():
+    """Keep-alive endpoint for cloud containers."""
+    return {"status": "ok", "timestamp": time.time()}
+
 @app.get("/api/projects")
-async def list_projects():
-    """Lists all created projects with summary metadata."""
+async def list_projects(response: Response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     projects = []
     if not os.path.exists(PROJECTS_DIR):
         return []
@@ -161,7 +158,6 @@ async def list_projects():
                 replaced_count = sum(1 for c in clips if c.get("is_replaced"))
                 ready_count = sum(1 for c in clips if c.get("status") == "ready")
                 
-                # Check first ready thumbnail for project cover
                 cover_thumb = ""
                 for c in clips:
                     if c.get("status") == "ready" and c.get("thumb_filename"):
@@ -213,12 +209,11 @@ async def upload_video(
     
     clean_name = project_name.strip() if project_name and project_name.strip() else os.path.splitext(file.filename)[0]
     
-    # Save uploaded original video
     ext = os.path.splitext(file.filename)[1] or ".mp4"
     saved_path = os.path.join(project_dir, f"original{ext}")
     
     with open(saved_path, "wb") as buffer:
-        while chunk := await file.read(1024 * 1024 * 4):  # 4MB chunks
+        while chunk := await file.read(1024 * 1024 * 4):
             buffer.write(chunk)
             
     tasks_progress[project_id] = {
@@ -229,7 +224,6 @@ async def upload_video(
         "total": 0
     }
     
-    # Start progressive background slicing
     threading.Thread(
         target=process_video_background,
         args=(project_id, saved_path, segment_length, file.filename, clean_name),
@@ -239,7 +233,8 @@ async def upload_video(
     return {"project_id": project_id, "status": "processing", "project_name": clean_name}
 
 @app.get("/api/progress/{project_id}")
-async def get_progress(project_id: str):
+async def get_progress(project_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     if project_id not in tasks_progress:
         json_path = os.path.join(PROJECTS_DIR, project_id, "project.json")
         if os.path.exists(json_path):
@@ -256,7 +251,8 @@ async def get_progress(project_id: str):
     return tasks_progress[project_id]
 
 @app.get("/api/project/{project_id}")
-async def get_project(project_id: str):
+async def get_project(project_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     json_path = os.path.join(PROJECTS_DIR, project_id, "project.json")
     if not os.path.exists(json_path):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -291,7 +287,11 @@ async def get_media(project_id: str, filename: str):
         raise HTTPException(status_code=404, detail="File not found or still processing")
         
     media_type = "video/mp4" if filename.endswith(".mp4") else "image/jpeg"
-    return FileResponse(file_path, media_type=media_type)
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
 
 @app.get("/api/download/clip/{project_id}/{clip_id}")
 async def download_clip(project_id: str, clip_id: str):
@@ -322,7 +322,10 @@ async def download_clip(project_id: str, clip_id: str):
         file_path,
         media_type="video/mp4",
         filename=download_filename,
-        headers={"Content-Disposition": f'attachment; filename="{download_filename}"'}
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_filename}"',
+            "Cache-Control": "no-cache, no-store, must-revalidate"
+        }
     )
 
 @app.get("/api/download/zip/{project_id}")
@@ -353,7 +356,10 @@ async def download_all_zip(project_id: str):
         zip_path,
         media_type="application/zip",
         filename=zip_filename,
-        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'}
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_filename}"',
+            "Cache-Control": "no-cache, no-store, must-revalidate"
+        }
     )
 
 @app.post("/api/replace/{project_id}/{clip_id}")
@@ -367,7 +373,7 @@ async def replace_clip_endpoint(
         raise HTTPException(status_code=404, detail="Project not found")
         
     temp_ext = os.path.splitext(file.filename)[1] or ".mp4"
-    temp_path = os.path.join(project_dir, f"temp_rep_{clip_id}{temp_ext}")
+    temp_path = os.path.join(project_dir, f"temp_rep_{clip_id}_{int(time.time())}{temp_ext}")
     
     with open(temp_path, "wb") as buffer:
         while chunk := await file.read(1024 * 1024 * 4):
@@ -381,12 +387,17 @@ async def replace_clip_endpoint(
             original_filename=file.filename
         )
         if os.path.exists(temp_path):
-            os.remove(temp_path)
+            try: os.remove(temp_path)
+            except Exception: pass
             
-        return updated_project
+        return JSONResponse(
+            content=updated_project,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
     except Exception as e:
         if os.path.exists(temp_path):
-            os.remove(temp_path)
+            try: os.remove(temp_path)
+            except Exception: pass
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/export-merged/{project_id}")
@@ -403,7 +414,7 @@ async def export_merged_video(project_id: str):
         return {
             "status": "ready",
             "filename": merged_filename,
-            "download_url": f"/api/media/{project_id}/{merged_filename}"
+            "download_url": f"/api/media/{project_id}/{merged_filename}?t={int(time.time())}"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

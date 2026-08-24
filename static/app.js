@@ -1,4 +1,4 @@
-// AutoClip Studio - Real-Time Incremental Slicing Frontend Logic
+// AutoClip Studio - Upgraded Frontend with Custom Delete Modal & Robust Replacement
 
 let currentProjectId = null;
 let currentProjectData = null;
@@ -7,6 +7,7 @@ let targetClipForReplace = null;
 let replacementFile = null;
 let viewMode = window.innerWidth <= 640 ? 'list' : 'list';
 let progressPollInterval = null;
+let projectToDeleteId = null;
 
 // DOM Elements
 const navProjectsBtn = document.getElementById('navProjectsBtn');
@@ -57,7 +58,13 @@ const viewModeListBtn = document.getElementById('viewModeListBtn');
 const viewModeGridBtn = document.getElementById('viewModeGridBtn');
 const clipsContainer = document.getElementById('clipsContainer');
 
-// Modals
+// Custom Delete Modal
+const customDeleteModal = document.getElementById('customDeleteModal');
+const deleteModalProjectName = document.getElementById('deleteModalProjectName');
+const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
+const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
+
+// Replace Modal
 const replaceModal = document.getElementById('replaceModal');
 const closeReplaceModal = document.getElementById('closeReplaceModal');
 const cancelReplaceBtn = document.getElementById('cancelReplaceBtn');
@@ -69,6 +76,7 @@ const replaceTargetTime = document.getElementById('replaceTargetTime');
 const replaceModalSubtitle = document.getElementById('replaceModalSubtitle');
 const repProgress = document.getElementById('repProgress');
 
+// Player Modal
 const playerModal = document.getElementById('playerModal');
 const closePlayerModal = document.getElementById('closePlayerModal');
 const modalVideoPlayer = document.getElementById('modalVideoPlayer');
@@ -84,6 +92,11 @@ function updateIcons() {
 document.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
   loadProjectsList(true);
+
+  // Keep-alive heartbeat every 4 minutes to prevent cloud sleeping
+  setInterval(() => {
+    fetch('/api/ping').catch(() => {});
+  }, 240000);
 });
 
 function formatBytes(bytes, decimals = 1) {
@@ -177,7 +190,16 @@ function setupEventListeners() {
   mobileZipBtn.addEventListener('click', downloadZip);
   exportMergedBtn.addEventListener('click', exportMerged);
   mobileMergeBtn.addEventListener('click', exportMerged);
-  deleteProjectBtn.addEventListener('click', handleDeleteCurrentProject);
+
+  // Custom Delete Modal Trigger
+  deleteProjectBtn.addEventListener('click', () => {
+    if (currentProjectId && currentProjectData) {
+      openDeleteModal(currentProjectId, currentProjectData.project_name);
+    }
+  });
+
+  cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+  confirmDeleteBtn.addEventListener('click', executeProjectDeletion);
 
   editProjectNameBtn.addEventListener('click', handleRenameProject);
 
@@ -192,6 +214,45 @@ function setupEventListeners() {
     modalVideoPlayer.src = '';
     playerModal.classList.add('hidden');
   });
+}
+
+function openDeleteModal(projectId, projectName) {
+  projectToDeleteId = projectId;
+  deleteModalProjectName.textContent = projectName || `Project #${projectId}`;
+  customDeleteModal.classList.remove('hidden');
+  updateIcons();
+}
+
+function closeDeleteModal() {
+  projectToDeleteId = null;
+  customDeleteModal.classList.add('hidden');
+}
+
+async function executeProjectDeletion() {
+  if (!projectToDeleteId) return;
+
+  confirmDeleteBtn.disabled = true;
+  confirmDeleteBtn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin mr-1"></i> Deleting...`;
+  updateIcons();
+
+  try {
+    const res = await fetch(`/api/project/${projectToDeleteId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete');
+
+    closeDeleteModal();
+    if (currentProjectId === projectToDeleteId) {
+      currentProjectId = null;
+      currentProjectData = null;
+      showProjectsView();
+    } else {
+      loadProjectsList();
+    }
+  } catch (err) {
+    alert('Delete error: ' + err.message);
+  } finally {
+    confirmDeleteBtn.disabled = false;
+    confirmDeleteBtn.innerHTML = 'Yes, Delete';
+  }
 }
 
 function setViewMode(mode) {
@@ -210,7 +271,7 @@ function setViewMode(mode) {
 
 async function loadProjectsList(autoSelectFirstIfAvailable = false) {
   try {
-    const res = await fetch('/api/projects');
+    const res = await fetch(`/api/projects?t=${Date.now()}`);
     if (!res.ok) return;
     const projects = await res.json();
 
@@ -232,7 +293,7 @@ async function loadProjectsList(autoSelectFirstIfAvailable = false) {
       const card = document.createElement('div');
       card.className = 'bg-slate-900/80 border border-slate-800 rounded-xl p-4 project-card flex flex-col justify-between cursor-pointer hover:bg-slate-900';
       
-      const thumbUrl = p.cover_thumb ? `/api/media/${p.project_id}/${p.cover_thumb}` : '/static/thumb_fallback.jpg';
+      const thumbUrl = p.cover_thumb ? `/api/media/${p.project_id}/${p.cover_thumb}?t=${Date.now()}` : '/static/thumb_fallback.jpg';
       const percentReplaced = p.total_clips > 0 ? Math.round((p.replaced_count / p.total_clips) * 100) : 0;
       
       card.innerHTML = `
@@ -266,7 +327,7 @@ async function loadProjectsList(autoSelectFirstIfAvailable = false) {
             <button class="flex-1 py-1.5 px-3 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 text-xs font-semibold transition" onclick="openProject('${p.project_id}')">
               Open Workspace
             </button>
-            <button class="p-1.5 rounded-lg bg-slate-800 hover:bg-red-600/30 text-slate-400 hover:text-red-300 border border-slate-700 transition" title="Delete" onclick="deleteProjectDirect(event, '${p.project_id}')">
+            <button class="p-1.5 rounded-lg bg-slate-800 hover:bg-red-600/30 text-slate-400 hover:text-red-300 border border-slate-700 transition" title="Delete Project" onclick="triggerDeleteFromList(event, '${p.project_id}', '${p.project_name.replace(/'/g, "\\'")}')">
               <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             </button>
           </div>
@@ -282,10 +343,15 @@ async function loadProjectsList(autoSelectFirstIfAvailable = false) {
   }
 }
 
+function triggerDeleteFromList(e, projectId, projectName) {
+  e.stopPropagation();
+  openDeleteModal(projectId, projectName);
+}
+
 async function openProject(projectId) {
   try {
     stopProgressPolling();
-    const res = await fetch(`/api/project/${projectId}`);
+    const res = await fetch(`/api/project/${projectId}?t=${Date.now()}`);
     if (!res.ok) throw new Error("Project not found");
     const project = await res.json();
     currentProjectId = projectId;
@@ -293,7 +359,6 @@ async function openProject(projectId) {
     renderStudioProject(project);
     showStudioView();
 
-    // If still slicing in background, start real-time polling
     if (project.status === 'processing') {
       startLivePolling(projectId);
     } else {
@@ -350,10 +415,8 @@ async function startUploadAndLiveSlicing() {
     const data = await res.json();
     currentProjectId = data.project_id;
     
-    // Smoothly jump directly to Studio Workspace for live progressive feed!
     showStudioView();
     startLivePolling(currentProjectId);
-
     resetFileInput();
   } catch (err) {
     alert('Upload error: ' + err.message);
@@ -370,7 +433,7 @@ function startLivePolling(projectId) {
 
   progressPollInterval = setInterval(async () => {
     try {
-      const res = await fetch(`/api/progress/${projectId}`);
+      const res = await fetch(`/api/progress/${projectId}?t=${Date.now()}`);
       if (!res.ok) return;
 
       const progressData = await res.json();
@@ -430,7 +493,8 @@ function renderClips(project) {
     const isProcessing = clip.status === 'processing';
     const isPending = !isReady && !isProcessing;
 
-    const thumbUrl = isReady ? `/api/media/${project.project_id}/${clip.thumb_filename}?t=${Date.now()}` : '/static/thumb_fallback.jpg';
+    const cacheBust = Date.now();
+    const thumbUrl = isReady ? `/api/media/${project.project_id}/${clip.thumb_filename}?t=${cacheBust}` : '/static/thumb_fallback.jpg';
     const downloadUrl = `/api/download/clip/${project.project_id}/${clip.clip_id}`;
 
     let statusBadge = '';
@@ -454,7 +518,7 @@ function renderClips(project) {
 
     if (viewMode === 'list') {
       const row = document.createElement('div');
-      row.className = `bg-slate-900/80 border ${isProcessing ? 'border-indigo-500/60 ring-1 ring-indigo-500/20' : 'border-slate-800/90'} rounded-xl p-2.5 sm:p-3 flex items-center justify-between gap-3 clip-list-item ${!isReady ? 'opacity-85' : ''}`;
+      row.className = `bg-slate-900/80 border ${clip.is_replaced ? 'border-emerald-500/40 bg-emerald-950/10' : isProcessing ? 'border-indigo-500/60 ring-1 ring-indigo-500/20' : 'border-slate-800/90'} rounded-xl p-2.5 sm:p-3 flex items-center justify-between gap-3 clip-list-item ${!isReady ? 'opacity-85' : ''}`;
       
       row.innerHTML = `
         <div class="flex items-center gap-3 min-w-0">
@@ -499,9 +563,9 @@ function renderClips(project) {
               <span class="hidden sm:inline">Download</span>
             </a>
 
-            <button onclick="openReplaceModal('${clip.clip_id}', '${clip.title}', '${clip.start_formatted} - ${clip.end_formatted} (${clip.duration_formatted})')" class="p-2 sm:px-3 sm:py-1.5 rounded-lg bg-slate-800 hover:bg-purple-600/30 text-slate-300 hover:text-purple-200 border border-slate-700 hover:border-purple-500/40 text-xs font-semibold transition flex items-center gap-1" title="Replace with Dubbed Clip">
-              <i data-lucide="repeat" class="w-3.5 h-3.5 text-purple-400"></i>
-              <span class="hidden sm:inline">Replace</span>
+            <button onclick="openReplaceModal('${clip.clip_id}', '${clip.title}', '${clip.start_formatted} - ${clip.end_formatted} (${clip.duration_formatted})')" class="p-2 sm:px-3 sm:py-1.5 rounded-lg ${clip.is_replaced ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-600 hover:text-white' : 'bg-slate-800 text-slate-300 hover:bg-purple-600/30 hover:text-purple-200 border-slate-700 hover:border-purple-500/40'} border text-xs font-semibold transition flex items-center gap-1" title="Replace with Dubbed Clip">
+              <i data-lucide="repeat" class="w-3.5 h-3.5 ${clip.is_replaced ? 'text-emerald-400' : 'text-purple-400'}"></i>
+              <span class="hidden sm:inline">${clip.is_replaced ? 'Re-dub' : 'Replace'}</span>
             </button>
           ` : isProcessing ? `
             <span class="text-[11px] font-mono text-indigo-400 px-3 py-1 rounded-lg bg-indigo-950/60 border border-indigo-500/30 flex items-center gap-1.5">
@@ -518,7 +582,7 @@ function renderClips(project) {
       clipsContainer.appendChild(row);
     } else {
       const card = document.createElement('div');
-      card.className = `bg-slate-900/80 border ${isProcessing ? 'border-indigo-500/60' : 'border-slate-800'} rounded-xl overflow-hidden flex flex-col clip-card`;
+      card.className = `bg-slate-900/80 border ${clip.is_replaced ? 'border-emerald-500/40' : isProcessing ? 'border-indigo-500/60' : 'border-slate-800'} rounded-xl overflow-hidden flex flex-col clip-card`;
 
       card.innerHTML = `
         <div class="relative aspect-video-thumb bg-black overflow-hidden ${isReady ? 'cursor-pointer group' : ''}" onclick="${isReady ? `openPlayerModal('${project.project_id}', '${clip.clip_id}', '${clip.filename}', '${clip.title}', '${clip.start_formatted} - ${clip.end_formatted}')` : ''}">
@@ -584,7 +648,7 @@ function renderClips(project) {
 }
 
 function openPlayerModal(projectId, clipId, filename, title, timerange) {
-  modalVideoPlayer.src = `/api/media/${projectId}/${filename}`;
+  modalVideoPlayer.src = `/api/media/${projectId}/${filename}?t=${Date.now()}`;
   playerModalDetails.textContent = `${title} • ${timerange}`;
   playerModalDownloadBtn.href = `/api/download/clip/${projectId}/${clipId}`;
   playerModal.classList.remove('hidden');
@@ -600,7 +664,7 @@ function openReplaceModal(clipId, title, timeRange) {
   confirmReplaceBtn.disabled = true;
   repProgress.classList.add('hidden');
 
-  replaceModalSubtitle.textContent = `Upload dubbed file for ${title}`;
+  replaceModalSubtitle.textContent = `Upload dubbed video for ${title}`;
   replaceTargetTime.textContent = timeRange;
 
   replaceModal.classList.remove('hidden');
@@ -633,9 +697,10 @@ async function submitClipReplacement() {
     if (!res.ok) throw new Error(await res.text());
 
     const updatedProject = await res.json();
+    currentProjectData = updatedProject;
     replaceModal.classList.add('hidden');
     renderStudioProject(updatedProject);
-    alert('Clip replaced successfully with new dubbed video!');
+    alert('Clip replaced successfully with your dubbed video!');
   } catch (err) {
     alert('Replace failed: ' + err.message);
   } finally {
@@ -654,7 +719,7 @@ async function exportMerged() {
   if (!currentProjectId) return;
 
   const originalHtml = exportMergedBtn.innerHTML;
-  exportMergedBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Merging...</span>`;
+  exportMergedBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Merging All Clips...</span>`;
   exportMergedBtn.disabled = true;
   if (mobileMergeBtn) mobileMergeBtn.disabled = true;
   updateIcons();
@@ -667,7 +732,7 @@ async function exportMerged() {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
 
-    alert('Final video merged successfully with all your replacements! Download starting now.');
+    alert('Final video merged successfully! Download starting now.');
     window.location.href = data.download_url;
   } catch (err) {
     alert('Merge failed: ' + err.message);
@@ -697,28 +762,5 @@ async function handleRenameProject() {
     renderStudioProject(updated);
   } catch (err) {
     alert(err.message);
-  }
-}
-
-async function handleDeleteCurrentProject() {
-  if (!currentProjectId) return;
-  if (!confirm('Are you sure you want to delete this project and all its clips?')) return;
-
-  try {
-    await fetch(`/api/project/${currentProjectId}`, { method: 'DELETE' });
-    showProjectsView();
-  } catch (err) {
-    alert('Delete failed: ' + err.message);
-  }
-}
-
-async function deleteProjectDirect(e, projectId) {
-  e.stopPropagation();
-  if (!confirm('Are you sure you want to delete this project?')) return;
-  try {
-    await fetch(`/api/project/${projectId}`, { method: 'DELETE' });
-    loadProjectsList();
-  } catch (err) {
-    alert('Delete failed: ' + err.message);
   }
 }

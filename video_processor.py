@@ -21,7 +21,7 @@ FFMPEG_PATH = get_ffmpeg_executable()
 
 def get_video_info(video_path):
     """
-    Extracts video duration and basic metadata using FFmpeg.
+    Extracts video duration, resolution, width, height, and metadata using FFmpeg.
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -35,7 +35,7 @@ def get_video_info(video_path):
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     _, stderr = process.communicate()
     
-    # Parse duration: Duration: 00:01:23.45
+    # Parse duration
     duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", stderr)
     if not duration_match:
         raise ValueError("Could not parse video duration from FFmpeg output.")
@@ -45,12 +45,21 @@ def get_video_info(video_path):
     
     # Parse resolution: 1920x1080
     res_match = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", stderr)
-    resolution = f"{res_match.group(1)}x{res_match.group(2)}" if res_match else "Unknown"
+    if res_match:
+        width = int(res_match.group(1))
+        height = int(res_match.group(2))
+        resolution = f"{width}x{height}"
+    else:
+        width = 1280
+        height = 720
+        resolution = "1280x720"
     
     return {
         "duration": total_seconds,
         "duration_formatted": format_seconds(total_seconds),
         "resolution": resolution,
+        "width": width,
+        "height": height,
         "filesize": os.path.getsize(video_path)
     }
 
@@ -132,6 +141,7 @@ def slice_single_clip(input_video, output_dir, segment):
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "22",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
@@ -142,7 +152,6 @@ def slice_single_clip(input_video, output_dir, segment):
     ]
     
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    
     extract_thumbnail(clip_path, thumb_path, timestamp=min(0.5, clip_dur / 2.0))
     
     return {
@@ -165,10 +174,28 @@ def slice_single_clip(input_video, output_dir, segment):
         "status": "ready"
     }
 
+def slice_video(input_video, output_dir, segment_length=60.0, progress_callback=None):
+    """Slices video sequentially and returns summary metadata."""
+    os.makedirs(output_dir, exist_ok=True)
+    info = get_video_info(input_video)
+    segments = calculate_segments(info["duration"], segment_length)
+    clips = []
+    for i, seg in enumerate(segments):
+        clip_data = slice_single_clip(input_video, output_dir, seg)
+        clips.append(clip_data)
+        if progress_callback:
+            progress_callback(i + 1, len(segments), f"Cut clip {i + 1} of {len(segments)}")
+    return {
+        "original_info": info,
+        "segment_length": segment_length,
+        "total_clips": len(clips),
+        "clips": clips
+    }
+
 def replace_clip(project_dir, clip_id, replacement_video_path, original_filename=""):
     """
-    Replaces a specific clip with a new user-uploaded video.
-    Normalizes/re-encodes the replacement to standard compatible MP4.
+    Replaces a specific clip with a new user-uploaded video (of any duration).
+    Normalizes/re-encodes the replacement to standard compatible MP4 and updates thumbnail.
     """
     project_json_path = os.path.join(project_dir, "project.json")
     if not os.path.exists(project_json_path):
@@ -187,19 +214,33 @@ def replace_clip(project_dir, clip_id, replacement_video_path, original_filename
         raise ValueError(f"Clip {clip_id} not found in project.")
         
     rep_info = get_video_info(replacement_video_path)
+    orig_info = project_data.get("original_info", {})
+    orig_w = orig_info.get("width", 1280)
+    orig_h = orig_info.get("height", 720)
     
-    rep_filename = f"{clip_id}_replaced.mp4"
+    # Ensure even dimensions for h264 encoder
+    if orig_w % 2 != 0: orig_w += 1
+    if orig_h % 2 != 0: orig_h += 1
+    
+    # Generate unique timestamped filename so browser caching never serves old video
+    ts = int(time.time())
+    rep_filename = f"{clip_id}_replaced_{ts}.mp4"
     rep_path = os.path.join(project_dir, rep_filename)
-    rep_thumb_filename = f"{clip_id}_replaced_thumb.jpg"
+    rep_thumb_filename = f"{clip_id}_replaced_{ts}_thumb.jpg"
     rep_thumb_path = os.path.join(project_dir, rep_thumb_filename)
+    
+    # Scale replacement to match project aspect ratio/resolution with padding
+    scale_filter = f"scale={orig_w}:{orig_h}:force_original_aspect_ratio=decrease,pad={orig_w}:{orig_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
     
     cmd = [
         FFMPEG_PATH,
         "-y",
         "-i", replacement_video_path,
+        "-vf", scale_filter,
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "22",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
@@ -209,8 +250,23 @@ def replace_clip(project_dir, clip_id, replacement_video_path, original_filename
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     
+    # Generate fresh thumbnail
     extract_thumbnail(rep_path, rep_thumb_path, timestamp=min(0.5, rep_info["duration"] / 2.0))
     
+    # Clean up old replaced files if any existed
+    if target_clip.get("is_replaced") and target_clip.get("filename"):
+        old_file = os.path.join(project_dir, target_clip["filename"])
+        if os.path.exists(old_file) and old_file != rep_path:
+            try: os.remove(old_file)
+            except Exception: pass
+            
+    if target_clip.get("is_replaced") and target_clip.get("thumb_filename"):
+        old_thumb = os.path.join(project_dir, target_clip["thumb_filename"])
+        if os.path.exists(old_thumb) and old_thumb != rep_thumb_path:
+            try: os.remove(old_thumb)
+            except Exception: pass
+            
+    # Update target clip data
     target_clip["is_replaced"] = True
     target_clip["filename"] = rep_filename
     target_clip["thumb_filename"] = rep_thumb_filename
@@ -220,6 +276,7 @@ def replace_clip(project_dir, clip_id, replacement_video_path, original_filename
     target_clip["filesize"] = os.path.getsize(rep_path)
     target_clip["status"] = "ready"
     
+    # Save updated project.json
     with open(project_json_path, "w", encoding="utf-8") as f:
         json.dump(project_data, f, indent=2)
         
@@ -227,7 +284,7 @@ def replace_clip(project_dir, clip_id, replacement_video_path, original_filename
 
 def merge_project_clips(project_dir, output_merged_path):
     """
-    Merges all active clips (including any replaced clips) in sequential order.
+    Merges all active clips (including any replaced clips of varying durations) in sequential order.
     """
     project_json_path = os.path.join(project_dir, "project.json")
     if not os.path.exists(project_json_path):
@@ -237,12 +294,13 @@ def merge_project_clips(project_dir, output_merged_path):
         project_data = json.load(f)
         
     clips = project_data.get("clips", [])
-    if not clips:
-        raise ValueError("No clips to merge.")
+    ready_clips = [c for c in clips if c.get("status") == "ready"]
+    if not ready_clips:
+        raise ValueError("No ready clips to merge.")
         
-    concat_txt_path = os.path.join(project_dir, "concat_list.txt")
+    concat_txt_path = os.path.join(project_dir, f"concat_list_{int(time.time())}.txt")
     with open(concat_txt_path, "w", encoding="utf-8") as f:
-        for clip in clips:
+        for clip in ready_clips:
             clip_full_path = os.path.join(project_dir, clip["filename"])
             escaped_path = clip_full_path.replace("\\", "/").replace("'", "'\\''")
             f.write(f"file '{escaped_path}'\n")
@@ -256,6 +314,7 @@ def merge_project_clips(project_dir, output_merged_path):
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "22",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
@@ -266,6 +325,7 @@ def merge_project_clips(project_dir, output_merged_path):
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     
     if os.path.exists(concat_txt_path):
-        os.remove(concat_txt_path)
+        try: os.remove(concat_txt_path)
+        except Exception: pass
         
     return output_merged_path
