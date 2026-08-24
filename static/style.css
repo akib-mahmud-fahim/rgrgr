@@ -1,0 +1,59 @@
+/* AutoClip Studio Custom Styles */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(99, 102, 241, 0.35);
+  }
+}
+
+.glow-card {
+  animation: pulseGlow 4s infinite ease-in-out;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0f19;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Smooth Card Hover Transitions */
+.project-card, .clip-card, .clip-list-item {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease;
+}
+
+.project-card:hover, .clip-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(99, 102, 241, 0.45);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px -3px rgba(99, 102, 241, 0.2);
+}
+
+.clip-list-item:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+  background-color: rgba(15, 23, 42, 0.85);
+}
+
+.aspect-video-thumb {
+  aspect-ratio: 16 / 9;
+}
+
+/* Touch Friendly Targets */
+@media (max-width: 640px) {
+  button, a {
+    touch-action: manipulation;
+  }
+}
